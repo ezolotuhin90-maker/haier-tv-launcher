@@ -1,0 +1,57 @@
+
+name: Build TV Launcher APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tv-home-main.zip'
+      - '.github/workflows/build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Build APK
+        run: |
+          unzip tv-home-main.zip
+          cd tv-home-main/launcher
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          JAR="$ANDROID_HOME/platforms/android-34/android.jar"
+          mkdir -p build/gen build/classes build/dex
+          "$BT/aapt2" compile --dir res -o build/res.zip
+          "$BT/aapt2" link -o build/base.apk -I "$JAR" \
+            --manifest AndroidManifest.xml --java build/gen \
+            -A assets --min-sdk-version 30 --target-sdk-version 30 \
+            build/res.zip
+          javac --release 11 -classpath "$JAR" -d build/classes \
+            $(find src build/gen -name '*.java')
+          "$BT/d8" --min-api 30 --lib "$JAR" \
+            --output build/dex $(find build/classes -name '*.class')
+          cp build/base.apk build/unsigned.apk
+          (cd build/dex && zip -q -u ../unsigned.apk classes.dex)
+          "$BT/zipalign" -f 4 build/unsigned.apk build/aligned.apk
+          keytool -genkeypair -keystore build/debug.keystore \
+            -storepass android -keypass android -alias tvhome \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=tvhome"
+          "$BT/apksigner" sign --ks build/debug.keystore \
+            --ks-pass pass:android --out build/tvhome.apk build/aligned.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Haier-TV-Launcher
+          path: tv-home-main/launcher/build/tvhome.apk
